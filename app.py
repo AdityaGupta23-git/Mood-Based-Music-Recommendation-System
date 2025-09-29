@@ -1,7 +1,6 @@
 import streamlit as st
-import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from deepface import DeepFace
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
@@ -19,22 +18,23 @@ sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
     cache_path=".spotify_cache"
 ))
 
-# 🌟 Image Preprocessing
+# 🌟 Image Preprocessing (no cv2)
 def preprocess_image(img):
-    if len(img.shape) == 2 or img.shape[2] == 1:
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-    elif img.shape[2] == 4:
-        img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
-    else:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img_yuv = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
-    img_yuv[:, :, 0] = cv2.equalizeHist(img_yuv[:, :, 0])
-    return cv2.cvtColor(img_yuv, cv2.COLOR_YUV2RGB)
+    # Ensure RGB
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+
+    # Histogram equalization on Y channel
+    img_yuv = img.convert("YCbCr")
+    y, cb, cr = img_yuv.split()
+    y_eq = ImageOps.equalize(y)  # Equalize luminance
+    img_eq = Image.merge("YCbCr", (y_eq, cb, cr)).convert("RGB")
+    return np.array(img_eq)
 
 # 🎭 Image Emotion Detection
-def detect_emotion_from_image(img):
+def detect_emotion_from_image(img_np):
     try:
-        img_processed = preprocess_image(img)
+        img_processed = preprocess_image(Image.fromarray(img_np))
         result = DeepFace.analyze(
             img_processed,
             actions=['emotion'],
@@ -50,9 +50,8 @@ def detect_emotion_from_image(img):
 def detect_emotion_from_webcam(frames):
     emotions = []
     for frame in frames:
-        preprocessed = preprocess_image(frame)
         try:
-            result = DeepFace.analyze(preprocessed, actions=['emotion'], detector_backend='mtcnn', enforce_detection=True)
+            result = DeepFace.analyze(frame, actions=['emotion'], detector_backend='mtcnn', enforce_detection=True)
             emotions.append(result[0]['dominant_emotion'])
         except:
             continue
@@ -83,7 +82,7 @@ def detect_emotion_from_audio(audio_path):
     except Exception as e:
         return f"Error: {str(e)}"
 
-# 🎶 Emotion Buffers with 50 global songs each
+# 🎶 Emotion Buffers (shortened here — keep your full 50 songs per emotion)
 emotion_tracks = {
     "happy": [
         "Happy - Pharrell Williams", "Can't Stop the Feeling - Justin Timberlake", "Uptown Funk - Bruno Mars",
@@ -208,6 +207,7 @@ emotion_tracks = {
     # Continue with similar 50-song buffers for "surprise", "fear", "disgust", "neutral" with global variety
 }
 
+
 # 🎨 Emoji & color mapping
 emotion_display = {
     "happy": ("😄 Happy", "#FFD700"),
@@ -246,7 +246,6 @@ def create_custom_playlist(emotion, tracks):
         public=True,
         description=f"Custom playlist for {emotion} mood"
     )
-    # Pick 50 random songs from buffer
     selected_tracks = random.sample(tracks, min(50, len(tracks)))
     track_uris = search_tracks_on_spotify(selected_tracks)
     if track_uris:
